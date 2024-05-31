@@ -1,29 +1,28 @@
 use bip32::{Mnemonic, Prefix, XPrv};
-use bitcoin::hashes::Hash;
-use bitcoin::hashes::{hmac, sha512, HashEngine};
-use bitcoin::util::bip32::ChildNumber;
-use bitcoin::util::bip32::DerivationPath;
-use bitcoin::util::bip32::ExtendedPrivKey;
+// use bitcoin::hashes::{Hash, hmac, sha512, HashEngine};
+use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
+use bitcoin::bip32::{ChildNumber, DerivationPath, Xpriv};
 use clap::Parser;
+use hmac::{Hmac, Mac};
+use sha2::Sha512;
 // use rand_core::OsRng;
 // use std::io;
 use std::str::FromStr;
 pub mod cripter;
-use crate::cripter::encrypt_small_file;
 use crate::cripter::decrypt_small_file;
-use std::io::Write;
-use std::path::Path;
+use crate::cripter::encrypt_small_file;
 use std::fs;
-
-const MNEMONIC_DATABASE_NAME: &str = "mnemonic.db";
+use std::io::{self, Write};
+use std::path::Path;
+use std::thread::sleep;
+use std::time::Duration;
 
 #[derive(Parser)]
 #[command(version, long_about = None)]
-
 #[clap(about, version, author)]
 struct Args {
     #[clap(short = 'n', long = "name")]
-    ///Nick or (user)name <String>
+    ///Name of password (e.g. service name @ username % no.). Case insensitive. <String>
     name: Option<String>,
 
     #[clap(short = 'i', long = "index")]
@@ -35,8 +34,12 @@ struct Args {
     pwd_len: u32,
 
     #[clap(short = 'v', long = "verbose", default_value = "false")]
-    ///Verbose mode. Always show password index.
+    ///Verbose mode. shows password index. [default: false]
     verbose: bool,
+
+    #[clap(short = 'c', long = "no-clipboard", default_value = "false")]
+    ///Prevent coping password to the clipboard, display password instead. [default: false]
+    no_clipboard: bool,
 
     #[clap(short = 'd', long = "decrypt", default_value = "false")]
     ///Decrypt mnemonic from file [file: mnemonic.db]
@@ -45,132 +48,306 @@ struct Args {
     #[clap(short = 'e', long = "encrypt", default_value = "false")]
     ///Encrypt mnemonic to file [file: mnemonic.db]
     encrypt: bool,
+
+    #[clap(short = 'f', long = "file", default_value = "mnemonic.db")]
+    ///Path to password database <String>
+    file: String,
 }
 
-const P1: u32 = 31;
-const M1: u32 = 1e4 as u32;
+// use std::hash::{Hash as StdHash, Hasher};
+// use std::collections::hash_map::DefaultHasher;
+// fn hash_function_default(input: &str) -> u32 {
+//     let mut hasher = DefaultHasher::new();
+//     StdHash::hash(input, &mut hasher);
+//     (hasher.finish() % 10000).try_into().unwrap()
+// }
 
-fn compute_hash(s: &str) -> u32 {
-    let mut hash = 0;
-    let mut p_pow = 1;
-    for ch in s.chars() {
-        hash = (hash + (ch as u32 + 1 - ' ' as u32) * p_pow) % M1;
-        p_pow = (p_pow * P1) % M1;
-//         println!("{} \n", (ch as u32 + 1 - ' ' as u32));
+fn hash_function(input_string: &str) -> u32 {
+    const PRIME: u32 = 101;
+    const STATE_SPACE: u32 = 1e4 as u32;
+    let mut hash: u32 = 0;
+    //     let mut p_pow = 1;
+    // Fowler–Noll–Vo (FNV) hash algorithm
+    for ch in input_string.chars() {
+        hash ^= ch as u32;
+        hash = hash.wrapping_mul(PRIME);
+        //         hash = (hash + (ch as u32 + 1 - ' ' as u32) * p_pow) % STATE_SPACE;
+        //         p_pow = (p_pow * PRIME) % STATE_SPACE;
     }
-    hash
+    hash % STATE_SPACE
 }
 
-fn check_mnemonic_base_write_perm() -> std::io::Result<bool> {
-    let mut path = MNEMONIC_DATABASE_NAME;
-    if !Path::new(MNEMONIC_DATABASE_NAME).exists() {
-        path = ".";
+// fn check_mnemonic_database_write_permissions_old() -> std::io::Result<bool> {
+//     let mut path = MNEMONIC_DATABASE_NAME;
+//     if !Path::new(MNEMONIC_DATABASE_NAME).exists() {
+//         path = ".";
+//     }
+//     // Check if able to write inside directory
+//     let md = fs::metadata(path)?;
+//     let permissions = md.permissions();
+//     Ok(!permissions.readonly())
+// }
+
+fn check_mnemonic_database_write_permissions(mnemonic_file: &Path) -> std::io::Result<bool> {
+    if mnemonic_file.exists() {
+        // Try to open the file with write permissions
+        return match fs::OpenOptions::new().write(true).open(mnemonic_file) {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        };
     }
+
     // Check if able to write inside directory
-    let md = fs::metadata(path)?;
+    let md = fs::metadata(".")?;
     let permissions = md.permissions();
     Ok(!permissions.readonly())
 }
 
-fn main() -> std::io::Result<()> {
-    let mut args = Args::parse();
-    match args.name {
-        Some(ref n) => { assert!(n.is_ascii(), "Option: Name is not ASCII string!");
-                    let hash = compute_hash(&n.as_str());
-                    assert!(args.index.is_none() || args.index.unwrap() == hash, "Ambiguous Option: Indexes do not match (i={} != {}(aka '{}'))!", args.index.unwrap(), hash, n);
-                    args.index = Some(hash) },
-        None => assert!(true)
-    }
-
-    let mut index : u32 = 0;
-    match args.index {
-        Some(idx) => index = idx,
-        None => assert!(true)
-    }
-//
-//     println!("Enter a BIP-32 root key (xprv...) or BIP-39 mnemonic");
-//     if !args.name.is_some() {
-//         args.index = compute_hash(&args.name.unwrap());
-//     }
-    if args.verbose {
-        println!("Index: {:?}", index);
-    }
-    let mut line = String::new();
-
-    let small_file_nonce = [0u8; 24];
-    let mut small_file_key = [0u8; 32];
-    if args.decrypt {
-        assert!(Path::new(MNEMONIC_DATABASE_NAME).exists(), "No mnemonic database file: {}!", MNEMONIC_DATABASE_NAME);
-        let password = rpassword::prompt_password("Your password to database: ")?;
-        let mut test: &mut[u8] = &mut small_file_key;
-        test.write(password.as_bytes())?;
-        match decrypt_small_file(MNEMONIC_DATABASE_NAME, &small_file_key, &small_file_nonce) {
-            std::result::Result::Ok(mnem) => line = mnem,
-            std::result::Result::Err(e) => assert!(false, "Decrypt mnemonic error: {}", e)
-        }
-    }
-    else {
-        println!("Enter a BIP-32 root key (xprv...) or 24 word BIP-39 mnemonic");
-        let b1 = std::io::stdin().read_line(&mut line)?;
-        assert!(b1 > 0, "No mnemonic input!");
-    }
-
-    let line = line.as_str().trim();
-    let root_xprv = if line.starts_with("xprv") {
-//         println!("debug XPRV:            {}", line);
-        ExtendedPrivKey::from_str(&line).unwrap()
+fn read_input(prompt: &str, masked: bool, allow_empty: bool) -> Result<String, io::Error> {
+    let input_line = if masked {
+        rpassword::prompt_password(prompt)?
     } else {
-        assert!(!line.is_empty(), "Empty mnemonic");
-//         println!("debug  Mnemonic:        {}", &line);
-        let mnemonic = Mnemonic::new(&line, Default::default()).unwrap();
-        let seed = mnemonic.to_seed("");
-        ExtendedPrivKey::from_str(&XPrv::new(&seed).unwrap().to_string(Prefix::XPRV)).unwrap()
+        println!("{}", prompt); // Display the custom prompt
+        let mut line = String::new();
+        io::stdin().read_line(&mut line)?;
+        line
     };
-//     else {
-//         let mnemonic = Mnemonic::random(&mut OsRng, Default::default());
-//         println!("     Mnemonic:        {}", &mnemonic.phrase());
-//         let seed = mnemonic.to_seed("");
-//         ExtendedPrivKey::from_str(&XPrv::new(&seed).unwrap().to_string(Prefix::XPRV)).unwrap()
-//     };
 
-    assert!(!root_xprv.private_key.key.is_empty(), "No private key!");
-
-    if args.encrypt {
-        assert!(check_mnemonic_base_write_perm()?, "No write permission to create mnemonic database file!");
-        let password = rpassword::prompt_password("Your password to database: ")?;
-        let mut test: &mut[u8] = &mut small_file_key;
-        test.write(password.as_bytes())?;
-        match encrypt_small_file(&line, MNEMONIC_DATABASE_NAME, &small_file_key, &small_file_nonce) {
-            std::result::Result::Ok(_) => assert!(true),
-            std::result::Result::Err(e) => assert!(false, "Encrypt mnemonic error: {}", e)
-        }
-        if args.index.is_none() && args.name.is_none() {
-            return Ok(())
-        }
+    let line = input_line.trim();
+    if !allow_empty && line.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Empty Input Found",
+        ));
     }
 
-//     println!("     Password Length: {:?}", args.pwd_len);
-//     println!("     Index:           {:?}", args.index);
+    Ok(line.to_string())
+}
 
+fn generate_bip85_password(root_xprv: Xpriv, index: u32, length: u32) -> String {
     let path = DerivationPath::from(vec![
         ChildNumber::Hardened { index: 707764 },
-        ChildNumber::from_hardened_idx(args.pwd_len).unwrap(),
+        ChildNumber::from_hardened_idx(length).unwrap(),
         ChildNumber::from_hardened_idx(index).unwrap(),
     ]);
 
     let secp = bitcoin::secp256k1::Secp256k1::new();
     const BIP85_CHILD_NUMBER: ChildNumber = ChildNumber::Hardened { index: 83696968 };
-    let bip85_root = root_xprv.ckd_priv(&secp, BIP85_CHILD_NUMBER).unwrap();
+    //     let bip85_root = root_xprv.ckd_priv(&secp, BIP85_CHILD_NUMBER).unwrap();
+    let bip85_root = root_xprv.derive_priv(&secp, &BIP85_CHILD_NUMBER).unwrap();
     let derived = bip85_root.derive_priv(&secp, &path).unwrap();
-    let mut h = hmac::HmacEngine::<sha512::Hash>::new("bip-entropy-from-k".as_bytes());
-    h.input(&derived.private_key.to_bytes());
-    let data = hmac::Hmac::from_engine(h).into_inner().to_vec();
-    let entropy_b64 = base64::encode(&data[0..64]);
-    let password = entropy_b64[0..args.pwd_len as usize].to_string();
+    //     let mut h = hmac::HmacEngine::<sha512::Hash>::new("bip-entropy-from-k".as_bytes());
+    //     h.input(&derived.private_key.to_bytes());
+    //     let data = hmac::Hmac::from_engine(h).into_inner().to_vec();
+    let mut hmac_sha512 =
+        Hmac::<Sha512>::new_from_slice("bip-entropy-from-k".as_bytes()).expect("Invalid key size");
+    hmac_sha512.update(&derived.private_key.secret_bytes());
+    let data = hmac_sha512.finalize().into_bytes().to_vec();
+    let entropy_b64 = STANDARD_NO_PAD.encode(&data[..64]);
+    entropy_b64[..length as usize].to_string()
+}
 
-//     println!("\n");
-//     println!("Password: {}", &password);
-    println!("{}", &password);
-//     println!("\n");
+fn main() -> std::io::Result<()> {
+    let args = Args::parse();
+    let mnemonic_file = Path::new(&args.file);
+    let index: Option<u32> = args
+        .name
+        .clone()
+        .map(|n| {
+            //assert!(n.is_ascii(), "Argument Error: Name is not ASCII string!");
+            let hash = hash_function(&n.trim().to_lowercase());
+            assert!(
+                args.index.is_none() || args.index.unwrap() == hash,
+                "Ambiguous Arguments: Index(i={}) do not match to Name('{}'(={}))!",
+                args.index.unwrap(),
+                n,
+                hash
+            );
+            Some(hash)
+        })
+        .or_else(|| {
+            Some(args.index.or_else(|| {
+                Some(hash_function(
+                    &read_input("Name of a password:", true, false)
+                        .expect("Expected not empty string")
+                        .trim()
+                        .to_lowercase(),
+                ))
+            }))
+        })
+        .expect("Could not calculate the password index");
+
+    // if index.is_none() {
+    //     index = Some(read_input("Name of password:", true, false)?);
+    // }
+    //
+    //     println!("Enter a BIP-32 root key (xprv...) or BIP-39 mnemonic");
+    //     if !args.name.is_some() {
+    //         args.index = hash_function(&args.name.unwrap());
+    //     }
+    if args.verbose {
+        println!("Index: {:?}", index.expect("Index not exist"));
+    }
+
+    let file_cipher_nonce = [0u8; 24];
+    let mut file_cipher_key = [0u8; 32];
+
+    let root_xprv = if args.decrypt {
+        assert!(
+            mnemonic_file.exists(),
+            "No mnemonic database file: {}!",
+            mnemonic_file.display()
+        );
+        let password = read_input("Password to database:", true, true)?;
+        let _ = io::stdout().flush();
+        //         print!("\x1B[1A\x1B[K"); //TODO: replace to use crate termion
+        let mut test: &mut [u8] = &mut file_cipher_key;
+        test.write(password.as_bytes())?;
+        match decrypt_small_file(mnemonic_file, &file_cipher_key, &file_cipher_nonce) {
+            std::result::Result::Ok(xpriv) => Xpriv::decode(&xpriv).unwrap(),
+            std::result::Result::Err(err) => {
+                eprintln!("Decrypt mnemonic error: {}", err);
+                return Err(err);
+            }
+        }
+    } else {
+        match read_input(
+            "Enter a BIP-32 root key (xprv...) or 24-word BIP-39 mnemonic:",
+            true,
+            false,
+        ) {
+            Ok(line) => {
+                if line.starts_with("xprv") {
+                    //             println!("debug XPRV:            {}", line);
+                    Xpriv::from_str(&line).unwrap()
+                } else {
+                    //         println!("debug  Mnemonic:        {}", &line);
+                    let mnemonic = Mnemonic::new(&line, Default::default()).unwrap(); // works only with 24 word mnemonic
+                    match read_input(
+                        "Enter passphrase for the BIP-39 mnemonic [Empty]:",
+                        true,
+                        true,
+                    ) {
+                        Ok(passphrase) => {
+                            let seed = mnemonic.to_seed(&passphrase);
+                            Xpriv::from_str(&XPrv::new(&seed).unwrap().to_string(Prefix::XPRV))
+                                .unwrap()
+                        }
+                        Err(err) => {
+                            eprintln!("Passphrase Error: {}", err);
+                            return Err(err);
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                eprintln!("Error: {}", err);
+                return Err(err);
+            }
+        }
+    };
+    //     else {
+    //         let mnemonic = Mnemonic::random(&mut OsRng, Default::default());
+    //         println!("     Mnemonic:        {}", &mnemonic.phrase());
+    //         let seed = mnemonic.to_seed("");
+    //         ExtendedPrivKey::from_str(&XPrv::new(&seed).unwrap().to_string(Prefix::XPRV)).unwrap()
+    //     };
+
+    //     assert!(!root_xprv.private_key.key.is_empty(), "No private key!");
+
+    if args.encrypt {
+        assert!(
+            check_mnemonic_database_write_permissions(mnemonic_file)?,
+            "No write permission to create mnemonic database file!"
+        );
+        let password = read_input("Your password to encrypt database:", true, false)?;
+        let mut test: &mut [u8] = &mut file_cipher_key;
+        test.write(password.as_bytes())?;
+        match encrypt_small_file(
+            &root_xprv.encode(),
+            mnemonic_file,
+            &file_cipher_key,
+            &file_cipher_nonce,
+        ) {
+            std::result::Result::Ok(_) => {}
+            std::result::Result::Err(e) => assert!(false, "Encrypt mnemonic error: {}", e),
+        }
+        if args.index.is_none() && args.name.is_none() {
+            return Ok(());
+        }
+    }
+
+    //     println!("     Password Length: {:?}", args.pwd_len);
+    //     println!("     Index:           {:?}", args.index);
+
+    let password =
+        generate_bip85_password(root_xprv, index.expect("Index not exist"), args.pwd_len);
+    if !args.no_clipboard {
+        let mut clipboard = clippers::Clipboard::get();
+        clipboard.write_text(password.clone()).unwrap();
+        assert_eq!(clipboard.read().unwrap().into_text().unwrap(), password);
+        if args.verbose {
+            println!("Password copied to the clipboard.");
+        }
+        sleep(Duration::from_secs(20));
+        let _ = clipboard.clear();
+    //         println!("debug: clip_res {}", clip_res);
+    } else {
+        println!("{}", &password);
+    }
+
     Ok(())
+}
+
+// Test cases
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::{distributions::Alphanumeric, Rng};
+
+    #[test]
+    fn test_generate_bip85_password() {
+        // Example input values
+        let root_xprv = Xpriv::from_str("xprv9s21ZrQH143K3i4kfV4tE2qAvhys9WDCpHJXKz2biqWkZwLKma1dzWaqin8CxCKPF3tX2fVRD9tBggJtxvdAxTpKfz8zRUoJZa3S7MtMgwy").unwrap();
+
+        // Test data: index, length, and expected password
+        // Coldcard Specifics: https://github.com/Coldcard/firmware/blob/master/docs/bip85-passwords.md
+        let test_data = [
+            (0, 21, "BSdrypS+J4Wr1q8DWjbFE"),
+            (1, 21, "TkDX7d9fnX9FZ9QEpjFDB"),
+            (2, 21, "cvfdmoZL3BcIpJ7G+Rb8k"),
+            (3, 21, "wsCALdN+GgbSOGyGE9aRN"),
+            (4, 21, "HfYbWx7gVmUmb2Bw4o4QD"),
+            (5, 21, "vLOf9WPO5QiPbOTEbz/yJ"),
+            (6, 21, "1oSUs7Cy3fnpdh/fAS7EK"),
+            (7, 21, "seh9WN6mlvPPB5jdVz3xN"),
+            (8, 21, "U4RD0R0A0RjpHOFtwnv9k"),
+        ];
+
+        for (index, length, expected) in &test_data {
+            // Call the function
+            let result = generate_bip85_password(root_xprv, *index, *length);
+
+            // Assert that the result matches the expected output
+            assert_eq!(result, expected.to_string());
+        }
+    }
+
+    #[test]
+    fn test_clipboard() {
+        let mut clipboard = clippers::Clipboard::get();
+        let text = "Hello, Rust!";
+        // Generate a random alphanumeric string of length 7
+        let random_string: String = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(3)
+            .map(char::from)
+            .collect();
+        let combined_text = format!("{} {}", text, random_string);
+        clipboard.write_text(combined_text.clone()).unwrap();
+        assert_eq!(
+            clipboard.read().unwrap().into_text().unwrap(),
+            combined_text
+        );
+    }
 }
