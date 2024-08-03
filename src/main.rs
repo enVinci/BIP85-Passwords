@@ -14,15 +14,18 @@ use crate::cripter::encrypt_small_file;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
+use std::env;
 use std::thread::sleep;
 use std::time::Duration;
+
+static DATABASE_PATH: &str = "mnemonic.db";
 
 #[derive(Parser)]
 #[command(version, long_about = None)]
 #[clap(about, version, author)]
 struct Args {
     #[clap(short = 'n', long = "name")]
-    ///Name of password (e.g. service name @ username % no.). Case insensitive. <String>
+    ///Name of password <String>. Case insensitive (e.g. service name @ username % no.).
     name: Option<String>,
 
     #[clap(short = 'i', long = "index")]
@@ -41,17 +44,17 @@ struct Args {
     ///Prevent coping password to the clipboard, display password instead. [default: false]
     no_clipboard: bool,
 
-    #[clap(short = 'd', long = "decrypt", default_value = "false")]
-    ///Decrypt mnemonic from file [file: mnemonic.db]
+    #[clap(short = 'd', long = "decrypt", default_value = "false", help=format!("Decrypt mnemonic from file [file: ~/{}]", DATABASE_PATH))]
+    ///Decrypt mnemonic from file. [default: false] [file: ~/mnemonic.db]
     decrypt: bool,
 
-    #[clap(short = 'e', long = "encrypt", default_value = "false")]
-    ///Encrypt mnemonic to file [file: mnemonic.db]
+    #[clap(short = 'e', long = "encrypt", default_value = "false", help=format!("Encrypt mnemonic to file [file: ~/{}]", DATABASE_PATH))]
+    ///Encrypt mnemonic to file. [default: false] [file: ~/mnemonic.db]
     encrypt: bool,
 
-    #[clap(short = 'f', long = "file", default_value = "mnemonic.db")]
-    ///Path to password database <String>
-    file: String,
+    #[clap(short = 'f', long = "file", help=format!("Path to password database. <String> [default: ~/{}]", DATABASE_PATH))]
+    ///Path to password database <String>. [default: ~/mnemonic.db]
+    file: Option<String>,
 }
 
 // use std::hash::{Hash as StdHash, Hasher};
@@ -148,8 +151,16 @@ fn generate_bip85_password(root_xprv: Xpriv, index: u32, length: u32) -> String 
 }
 
 fn main() -> std::io::Result<()> {
-    let args = Args::parse();
-    let mnemonic_file = Path::new(&args.file);
+    let mut args = Args::parse();
+    let mnemonic_file_string = if args.file.is_some() {
+        if !args.decrypt && !args.encrypt {
+            args.decrypt = true;
+        }
+        args.file.unwrap()
+    } else {
+        Path::new(&env::home_dir().expect("home dir env not specified. Try use -f option to specify database path.").into_os_string().into_string().expect("conversion String")).join(DATABASE_PATH).to_str().expect("conversion Path to str failed").to_string()
+    };
+    let mnemonic_file = Path::new(&mnemonic_file_string);
     let index: Option<u32> = args
         .name
         .clone()
@@ -195,7 +206,7 @@ fn main() -> std::io::Result<()> {
     let root_xprv = if args.decrypt {
         assert!(
             mnemonic_file.exists(),
-            "No mnemonic database file: {}!",
+            "No mnemonic database file: {}! Try use -f option to specify database path.",
             mnemonic_file.display()
         );
         let password = read_input("Password to database:", true, true)?;
@@ -284,7 +295,10 @@ fn main() -> std::io::Result<()> {
         generate_bip85_password(root_xprv, index.expect("Index not exist"), args.pwd_len);
     if !args.no_clipboard {
         let mut clipboard = clippers::Clipboard::get();
-        clipboard.write_text(password.clone()).unwrap();
+        let copy_res = clipboard.write_text(password.clone());
+        if copy_res.is_err() {
+            println!("Error while coping to clipboard. Try use -c option to display password instead.");
+        }
         assert_eq!(clipboard.read().unwrap().into_text().unwrap(), password);
         if args.verbose {
             println!("Password copied to the clipboard.");
@@ -344,7 +358,7 @@ mod tests {
             .map(char::from)
             .collect();
         let combined_text = format!("{} {}", text, random_string);
-        clipboard.write_text(combined_text.clone()).unwrap();
+        let _ = clipboard.write_text(combined_text.clone());
         assert_eq!(
             clipboard.read().unwrap().into_text().unwrap(),
             combined_text
