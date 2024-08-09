@@ -25,15 +25,15 @@ static DATABASE_PATH: &str = "mnemonic.db";
 #[clap(about, version, author)]
 struct Args {
     #[clap(short = 'n', long = "name")]
-    ///Name of password <String>. Case insensitive (e.g. service name @ username % no.).
+    ///<String> Name of password. Case insensitive (e.g. service name @ username % no.).
     name: Option<String>,
 
     #[clap(short = 'i', long = "index")]
-    ///Index BIP85 <u32> [default: 0]
+    ///<u32> Index BIP85
     index: Option<u32>,
 
     #[clap(short = 'l', long = "length", default_value = "21")]
-    ///Password length <u32>
+    ///<u32> Password length
     pwd_len: u32,
 
     #[clap(short = 'v', long = "verbose", default_value = "false")]
@@ -44,17 +44,17 @@ struct Args {
     ///Prevent coping password to the clipboard, display password instead. [default: false]
     no_clipboard: bool,
 
-    #[clap(short = 'd', long = "decrypt", default_value = "false", help=format!("Decrypt mnemonic from file [file: ~/{}]", DATABASE_PATH))]
-    ///Decrypt mnemonic from file. [default: false] [file: ~/mnemonic.db]
+    #[clap(short = 'd', long = "decrypt", default_value = "false", help=format!("Decrypt mnemonic from database [default file: ~/{}]", DATABASE_PATH))]
+    ///Decrypt mnemonic from file. [default: false] [default file: ~/mnemonic.db]
     decrypt: bool,
 
-    #[clap(short = 'e', long = "encrypt", default_value = "false", help=format!("Encrypt mnemonic to file [file: ~/{}]", DATABASE_PATH))]
-    ///Encrypt mnemonic to file. [default: false] [file: ~/mnemonic.db]
+    #[clap(short = 'e', long = "encrypt", default_value = "false", help=format!("Encrypt mnemonic to database [default file: ~/{}]", DATABASE_PATH))]
+    ///Encrypt mnemonic to file. [default: false] [default file: ~/mnemonic.db]
     encrypt: bool,
 
-    #[clap(short = 'f', long = "file", help=format!("Path to password database. <String> [default: ~/{}]", DATABASE_PATH))]
+    #[clap(short = 'f', long = "file", help=format!("Path to password protected mnemonic database. Used for decryption by default. [default: ~/{}]", DATABASE_PATH))]
     ///Path to password database <String>. [default: ~/mnemonic.db]
-    file: Option<String>,
+    db_path: Option<String>,
 }
 
 // use std::hash::{Hash as StdHash, Hasher};
@@ -152,15 +152,15 @@ fn generate_bip85_password(root_xprv: Xpriv, index: u32, length: u32) -> String 
 
 fn main() -> std::io::Result<()> {
     let mut args = Args::parse();
-    let mnemonic_file_string = if args.file.is_some() {
-        if !args.decrypt && !args.encrypt {
-            args.decrypt = true;
-        }
-        args.file.unwrap()
+    let mnemonic_file_string = if args.db_path.is_some() {
+        args.db_path.unwrap()
     } else {
         Path::new(&env::home_dir().expect("home dir env not specified. Try use -f option to specify database path.").into_os_string().into_string().expect("conversion String")).join(DATABASE_PATH).to_str().expect("conversion Path to str failed").to_string()
     };
     let mnemonic_file = Path::new(&mnemonic_file_string);
+    if !args.decrypt && !args.encrypt && mnemonic_file.exists() {
+        args.decrypt = true;
+    }
     let index: Option<u32> = args
         .name
         .clone()
