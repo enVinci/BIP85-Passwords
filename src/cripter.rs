@@ -1,5 +1,7 @@
+use anyhow::{Context, Result};
 use anyhow::anyhow;
 use chacha20poly1305::{AeadInPlace, KeyInit, XChaCha20Poly1305};
+use rand::RngCore;
 use std::path::Path;
 use std::{
     fs::{self, File},
@@ -10,22 +12,28 @@ pub fn encrypt_small_file(
     data: &[u8],
     filepath: &Path,
     key: &[u8; 32],
-    nonce: &[u8; 24], //192-bit (24-byte) nonce.
 ) -> Result<(), anyhow::Error> {
     let cipher = XChaCha20Poly1305::new(key.into());
-    let mut buffer: Vec<u8> = Vec::with_capacity(256);
-    buffer.extend_from_slice(data);
-    //     buffer.extend([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
 
-    //     let mut ciphertext = cipher
-    //             .encrypt(nonce.into(), data.as_ref())
-    //             .map_err(|err| anyhow!("Encrypting file: {}", err))?;
+    // Generate a random nonce
+    let mut nonce = [0u8; 24];
+    rand::thread_rng().fill_bytes(&mut nonce);
+
+    // Create a buffer to hold the encrypted data
+    let mut buffer = Vec::with_capacity(data.len() + nonce.len());
+    buffer.extend_from_slice(&nonce); // Prepend nonce to the buffer
+
+    // Encrypt the data
+    let mut data_to_encrypt = data.to_vec();
     cipher
-        .encrypt_in_place(nonce.into(), b"", &mut buffer)
+        .encrypt_in_place(&nonce.into(), b"", &mut data_to_encrypt)
         .map_err(|err| anyhow!("Encrypting file: {}", err))?;
 
-    //     println!("buffer len {}", buffer.len());
-    fs::write(&filepath, buffer)?;
+    // Append the encrypted data to the buffer
+    buffer.extend_from_slice(&data_to_encrypt);
+
+    // Write the buffer to the file
+    fs::write(filepath, buffer)?;
 
     Ok(())
 }
@@ -33,20 +41,24 @@ pub fn encrypt_small_file(
 pub fn decrypt_small_file(
     encrypted_file_path: &Path,
     key: &[u8; 32],
-    nonce: &[u8; 24],
-) -> Result<Vec<u8>, std::io::Error> {
+) -> Result<Vec<u8>, anyhow::Error> {
     let cipher = XChaCha20Poly1305::new(key.into());
-    let mut file = File::open(encrypted_file_path)?;
-    let mut buffer: Vec<u8> = Vec::with_capacity(256);
-    file.read_to_end(&mut buffer)?;
+    let mut file = File::open(encrypted_file_path).context("Opening encrypted file")?;
 
-    match cipher.decrypt_in_place(nonce.into(), b"", &mut buffer) {
-        Ok(_) => Ok(buffer),
-        Err(err) => Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("Decrypting file: {}", err),
-        )),
-    }
+    // Read the entire file into a buffer
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer).context("Reading encrypted file")?;
+
+    // Extract the nonce from the beginning of the buffer
+    let (nonce, encrypted_data) = buffer.split_at(24);
+
+    // Decrypt the data
+    let mut decrypted_data = encrypted_data.to_vec();
+    cipher
+        .decrypt_in_place(nonce.into(), b"", &mut decrypted_data)
+        .map_err(|err| anyhow!("Decrypting file: {}", err))?;
+
+    Ok(decrypted_data)
 }
 
 // fn encrypt_large_file(
@@ -131,41 +143,39 @@ mod tests {
         // Arrange
         let data = b"Hello, world!";
         let filepath = Path::new("cargo_test_encrypt_decrypt_file.db");
-        let key: [u8; 32] = [0; 32];
-        let nonce: [u8; 24] = [0; 24];
+        let key: [u8; 32] = [0; 32]; // Use a fixed key for testing
 
         // Encrypt
-        let result = encrypt_small_file(data, filepath, &key, &nonce);
+        let result = encrypt_small_file(data, filepath, &key);
         // Assert
         assert!(result.is_ok());
 
         // Decrypt
-        let decrypted_data = decrypt_small_file(&filepath, &key, &nonce);
+        let decrypted_data = decrypt_small_file(&filepath, &key);
         // Assert
         assert!(decrypted_data.is_ok());
         assert_eq!(decrypted_data.unwrap(), data);
 
         //Encrypted file size check for 16-bytes overhead for auth tag
         let mut file = File::open(filepath).expect("Failed to open file");
-        let mut buffer: Vec<u8> = Vec::with_capacity(256);
+        let mut buffer: Vec<u8> = Vec::new();
         file.read_to_end(&mut buffer)
             .expect("Failed to read from file");
-        assert_eq!(buffer.len(), data.len() + 16);
+        assert_eq!(buffer.len(), data.len() + 24 + 16); // 24 bytes for nonce + 16 bytes for auth tag
 
         // Clean up: Remove the file
         std::fs::remove_file(filepath).expect("Failed to remove file");
     }
 
     #[test]
-    fn test_encrypt_small_file() {
+    fn test_encrypt_small_file() {// Test if payload is encrypted
         // Arrange
         let data = b"Hello, world!";
         let filepath = Path::new("cargo_test_encrypt_file.db");
-        let key: [u8; 32] = [0; 32];
-        let nonce: [u8; 24] = [0; 24];
+        let key: [u8; 32] = [0; 32]; // Use a fixed key for testing
 
         // Encrypt
-        let result = encrypt_small_file(data, filepath, &key, &nonce);
+        let result = encrypt_small_file(data, filepath, &key);
         assert!(result.is_ok());
 
         // Read

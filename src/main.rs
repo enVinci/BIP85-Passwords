@@ -5,6 +5,8 @@ use bitcoin::bip32::{ChildNumber, DerivationPath, Xpriv};
 use clap::Parser;
 use hmac::{Hmac, Mac};
 use sha2::Sha512;
+use sha2::Sha256;
+use sha2::Digest;
 // use rand_core::OsRng;
 // use std::io;
 use std::str::FromStr;
@@ -65,18 +67,18 @@ struct Args {
 //     (hasher.finish() % 10000).try_into().unwrap()
 // }
 
-fn hash_function_fnv(input_string: &str) -> u32 {
-    const PRIME: u32 = 101; // Multiplier, it does not have to be a prime number
-    const STATE_SPACE: u32 = 10000;
-    let mut hash: u32 = 0; // FNV offset basis, may be 0xCAFEBABE to easy remember
-    // Fowler–Noll–Vo (FNV) hash algorithm
-    for ch in input_string.chars() {
-        hash ^= ch as u32;
-        hash = hash.wrapping_mul(PRIME);
-    }
-
-    hash % STATE_SPACE
-}
+// fn hash_function_fnv(input_string: &str) -> u32 {
+//     const PRIME: u32 = 101; // Multiplier, it does not have to be a prime number
+//     const STATE_SPACE: u32 = 10000;
+//     let mut hash: u32 = 0; // FNV offset basis, may be 0xCAFEBABE to easy remember
+//     // Fowler–Noll–Vo (FNV) hash algorithm
+//     for ch in input_string.chars() {
+//         hash ^= ch as u32;
+//         hash = hash.wrapping_mul(PRIME);
+//     }
+//
+//     hash % STATE_SPACE
+// }
 
 fn hash_function_polyu32(input_string: &str) -> u32 {
     const PRIME: u32 = 31;
@@ -92,19 +94,19 @@ fn hash_function_polyu32(input_string: &str) -> u32 {
     hash % STATE_SPACE
 }
 
-fn hash_function_polyu32_u64internal(input_string: &str) -> u32 {
-    const PRIME: u64 = 31;
-    const STATE_SPACE: u32 = 10000; // Hash space size
-    let mut hash: u64 = 0;
-    let mut power: u64 = 1;
-
-    for ch in input_string.chars() {
-        hash = hash.wrapping_add(power.wrapping_mul(ch as u64));
-        power = power.wrapping_mul(PRIME);
-    }
-
-    (hash % (STATE_SPACE as u64)) as u32 // Cast the final result back to u32
-}
+// fn hash_function_polyu32_u64internal(input_string: &str) -> u32 {
+//     const PRIME: u64 = 31;
+//     const STATE_SPACE: u32 = 10000; // Hash space size
+//     let mut hash: u64 = 0;
+//     let mut power: u64 = 1;
+//
+//     for ch in input_string.chars() {
+//         hash = hash.wrapping_add(power.wrapping_mul(ch as u64));
+//         power = power.wrapping_mul(PRIME);
+//     }
+//
+//     (hash % (STATE_SPACE as u64)) as u32 // Cast the final result back to u32
+// }
 
 // fn check_mnemonic_database_write_permissions_old() -> std::io::Result<bool> {
 //     let mut path = MNEMONIC_DATABASE_NAME;
@@ -176,7 +178,7 @@ fn generate_bip85_password(root_xprv: Xpriv, index: u32, length: u32) -> String 
     entropy_b64[..length as usize].to_string()
 }
 
-fn main() -> std::io::Result<()> {
+fn main() -> anyhow::Result<()> {
     let mut args = Args::parse();
     let mnemonic_file_string = if args.db_path.is_some() {
         args.db_path.unwrap()
@@ -226,7 +228,7 @@ fn main() -> std::io::Result<()> {
         println!("Index: {:?}", index.expect("Index not exist"));
     }
 
-    let file_cipher_nonce = [0u8; 24];
+//     let file_cipher_nonce = [0u8; 24];
     let mut file_cipher_key = [0u8; 32];
 
     let root_xprv = if args.decrypt {
@@ -238,9 +240,11 @@ fn main() -> std::io::Result<()> {
         let password = read_input("Password to database:", true, true)?;
         let _ = io::stdout().flush();
         //         print!("\x1B[1A\x1B[K"); //TODO: replace to use crate termion
-        let mut test: &mut [u8] = &mut file_cipher_key;
-        test.write(password.as_bytes())?;
-        match decrypt_small_file(mnemonic_file, &file_cipher_key, &file_cipher_nonce) {
+        let mut hasher = Sha256::new();
+        hasher.update(password.as_bytes());
+        let hashed_password = hasher.finalize();
+        file_cipher_key.copy_from_slice(&hashed_password);
+        match decrypt_small_file(mnemonic_file, &file_cipher_key) {
             std::result::Result::Ok(xpriv) => Xpriv::decode(&xpriv).unwrap(),
             std::result::Result::Err(err) => {
                 eprintln!("Decrypt mnemonic error: {}", err);
@@ -272,14 +276,14 @@ fn main() -> std::io::Result<()> {
                         }
                         Err(err) => {
                             eprintln!("Passphrase Error: {}", err);
-                            return Err(err);
+                            return Err(err.into());
                         }
                     }
                 }
             }
             Err(err) => {
                 eprintln!("Error: {}", err);
-                return Err(err);
+                return Err(err.into());
             }
         }
     };
@@ -298,16 +302,20 @@ fn main() -> std::io::Result<()> {
             "No write permission to create mnemonic database file!"
         );
         let password = read_input("Your password to encrypt database:", true, false)?;
-        let mut test: &mut [u8] = &mut file_cipher_key;
-        test.write(password.as_bytes())?;
+        let mut hasher = Sha256::new();
+        hasher.update(password.as_bytes());
+        let hashed_password = hasher.finalize();
+        file_cipher_key.copy_from_slice(&hashed_password); // Ensure the key is 32 bytes
         match encrypt_small_file(
             &root_xprv.encode(),
             mnemonic_file,
             &file_cipher_key,
-            &file_cipher_nonce,
         ) {
             std::result::Result::Ok(_) => {}
-            std::result::Result::Err(e) => assert!(false, "Encrypt mnemonic error: {}", e),
+            std::result::Result::Err(e) => {
+                eprintln!("Encrypt mnemonic error: {}", e);
+                return Err(e.into());
+            }
         }
         if args.index.is_none() && args.name.is_none() {
             return Ok(());
@@ -323,7 +331,7 @@ fn main() -> std::io::Result<()> {
         let mut clipboard = clippers::Clipboard::get();
         let copy_res = clipboard.write_text(password.clone());
         if copy_res.is_err() {
-            println!("Error while coping to clipboard. Try use -c option to display password instead.");
+            println!("Error while copying to clipboard. Try use -c option to display password instead.");
         }
         assert_eq!(clipboard.read().unwrap().into_text().unwrap(), password);
         if args.verbose {
