@@ -25,7 +25,7 @@ static DATABASE_PATH: &str = "mnemonic.db";
 #[clap(about, version, author)]
 struct Args {
     #[clap(short = 'n', long = "name")]
-    ///<String> Name of password. Case insensitive (e.g. service name @ username % no.).
+    ///<String> Name of password. Case insensitive (e.g. servicename@username#no).
     name: Option<String>,
 
     #[clap(short = 'i', long = "index")]
@@ -37,18 +37,18 @@ struct Args {
     pwd_len: u32,
 
     #[clap(short = 'v', long = "verbose", default_value = "false")]
-    ///Verbose mode. shows password index. [default: false]
+    ///Verbose mode. Shows password index that corresponds to given name of password. [default: false]
     verbose: bool,
 
     #[clap(short = 'c', long = "no-clipboard", default_value = "false")]
     ///Prevent coping password to the clipboard, display password instead. [default: false]
     no_clipboard: bool,
 
-    #[clap(short = 'd', long = "decrypt", default_value = "false", help=format!("Decrypt mnemonic from database [default file: ~/{}]", DATABASE_PATH))]
+    #[clap(short = 'd', long = "decrypt", default_value = "false", help=format!("Decrypt mnemonic from database [default: true if password database found] [default file: ~/{}]", DATABASE_PATH))]
     ///Decrypt mnemonic from file. [default: false] [default file: ~/mnemonic.db]
     decrypt: bool,
 
-    #[clap(short = 'e', long = "encrypt", default_value = "false", help=format!("Encrypt mnemonic to database [default file: ~/{}]", DATABASE_PATH))]
+    #[clap(short = 'e', long = "encrypt", default_value = "false", help=format!("Encrypt mnemonic to database [default: false] [default file: ~/{}]", DATABASE_PATH))]
     ///Encrypt mnemonic to file. [default: false] [default file: ~/mnemonic.db]
     encrypt: bool,
 
@@ -65,19 +65,45 @@ struct Args {
 //     (hasher.finish() % 10000).try_into().unwrap()
 // }
 
-fn hash_function(input_string: &str) -> u32 {
-    const PRIME: u32 = 101;
-    const STATE_SPACE: u32 = 1e4 as u32;
-    let mut hash: u32 = 0;
-    //     let mut p_pow = 1;
+fn hash_function_fnv(input_string: &str) -> u32 {
+    const PRIME: u32 = 101; // Multiplier, it does not have to be a prime number
+    const STATE_SPACE: u32 = 10000;
+    let mut hash: u32 = 0; // FNV offset basis, may be 0xCAFEBABE to easy remember
     // Fowler–Noll–Vo (FNV) hash algorithm
     for ch in input_string.chars() {
         hash ^= ch as u32;
         hash = hash.wrapping_mul(PRIME);
-        //         hash = (hash + (ch as u32 + 1 - ' ' as u32) * p_pow) % STATE_SPACE;
-        //         p_pow = (p_pow * PRIME) % STATE_SPACE;
     }
+
     hash % STATE_SPACE
+}
+
+fn hash_function_polyu32(input_string: &str) -> u32 {
+    const PRIME: u32 = 31;
+    const STATE_SPACE: u32 = 10000; // Hash space size
+    let mut hash: u32 = 0;
+    let mut power: u32 = 1;
+
+    for ch in input_string.chars() {
+        hash = hash.wrapping_add(power.wrapping_mul(ch as u32));
+        power = power.wrapping_mul(PRIME);
+    }
+
+    hash % STATE_SPACE
+}
+
+fn hash_function_polyu32_u64internal(input_string: &str) -> u32 {
+    const PRIME: u64 = 31;
+    const STATE_SPACE: u32 = 10000; // Hash space size
+    let mut hash: u64 = 0;
+    let mut power: u64 = 1;
+
+    for ch in input_string.chars() {
+        hash = hash.wrapping_add(power.wrapping_mul(ch as u64));
+        power = power.wrapping_mul(PRIME);
+    }
+
+    (hash % (STATE_SPACE as u64)) as u32 // Cast the final result back to u32
 }
 
 // fn check_mnemonic_database_write_permissions_old() -> std::io::Result<bool> {
@@ -166,7 +192,7 @@ fn main() -> std::io::Result<()> {
         .clone()
         .map(|n| {
             //assert!(n.is_ascii(), "Argument Error: Name is not ASCII string!");
-            let hash = hash_function(&n.trim().to_lowercase());
+            let hash = hash_function_polyu32(&n.trim().to_lowercase());
             assert!(
                 args.index.is_none() || args.index.unwrap() == hash,
                 "Ambiguous Arguments: Index(i={}) do not match to Name('{}'(={}))!",
@@ -178,7 +204,7 @@ fn main() -> std::io::Result<()> {
         })
         .or_else(|| {
             Some(args.index.or_else(|| {
-                Some(hash_function(
+                Some(hash_function_polyu32(
                     &read_input("Name of a password:", true, false)
                         .expect("Expected not empty string")
                         .trim()
@@ -194,7 +220,7 @@ fn main() -> std::io::Result<()> {
     //
     //     println!("Enter a BIP-32 root key (xprv...) or BIP-39 mnemonic");
     //     if !args.name.is_some() {
-    //         args.index = hash_function(&args.name.unwrap());
+    //         args.index = hash_function_polyu32(&args.name.unwrap());
     //     }
     if args.verbose {
         println!("Index: {:?}", index.expect("Index not exist"));
