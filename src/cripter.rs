@@ -1,11 +1,12 @@
-use anyhow::{Context, Result};
 use anyhow::anyhow;
+use anyhow::{Context, Result};
 use chacha20poly1305::{AeadInPlace, KeyInit, XChaCha20Poly1305};
 use rand::RngCore;
 use std::path::Path;
 use std::{
     fs::{self, File},
     io::Read,
+    io::Write,
 };
 
 pub fn encrypt_small_file(
@@ -47,7 +48,8 @@ pub fn decrypt_small_file(
 
     // Read the entire file into a buffer
     let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer).context("Reading encrypted file")?;
+    file.read_to_end(&mut buffer)
+        .context("Reading encrypted file")?;
 
     // Extract the nonce from the beginning of the buffer
     let (nonce, encrypted_data) = buffer.split_at(24);
@@ -59,6 +61,92 @@ pub fn decrypt_small_file(
         .map_err(|err| anyhow!("Decrypting file: {}", err))?;
 
     Ok(decrypted_data)
+}
+
+pub fn encrypt_small_file_with_rounds(
+    data: &[u8],
+    filepath: &Path,
+    key: &[u8; 32],
+    rounds: usize,
+) -> Result<(), anyhow::Error> {
+    // Check if rounds is greater than 0
+    if rounds == 0 {
+        return Err(anyhow!("Number of rounds must be greater than 0."));
+    }
+
+    let mut encrypted_data = data.to_vec();
+
+    for _ in 0..rounds {
+        // Create a new cipher instance for each round
+        let cipher = XChaCha20Poly1305::new(key.into());
+
+        // Generate a random nonce
+        let mut nonce = [0u8; 24];
+        rand::thread_rng().fill_bytes(&mut nonce);
+
+        // Create a buffer to hold the encrypted data
+        let mut buffer = Vec::with_capacity(encrypted_data.len() + nonce.len());
+        buffer.extend_from_slice(&nonce); // Prepend nonce to the buffer
+
+        // Encrypt the data
+        cipher
+            .encrypt_in_place(&nonce.into(), b"", &mut encrypted_data)
+            .map_err(|err| anyhow!("Encrypting file: {}", err))?;
+
+        // Append the encrypted data to the buffer
+        buffer.extend_from_slice(&encrypted_data);
+
+        // Update encrypted_data for the next round
+        encrypted_data = buffer.clone(); // Use the newly encrypted data for the next round
+    }
+
+    // Write the final encrypted data to the file after all rounds
+    let mut file = File::create(filepath).context("Creating encrypted file")?;
+    file.write_all(&encrypted_data)
+        .context("Writing encrypted data to file")?;
+
+    // Sync the file to ensure data is written to permanent storage
+    file.sync_all().context("Syncing file to disk")?;
+
+    Ok(())
+}
+
+pub fn decrypt_small_file_with_rounds(
+    encrypted_file_path: &Path,
+    key: &[u8; 32],
+    rounds: usize,
+) -> Result<Vec<u8>, anyhow::Error> {
+    // Check if rounds is greater than 0
+    if rounds == 0 {
+        return Err(anyhow!("Number of rounds must be greater than 0."));
+    }
+
+    // Read the encrypted file
+    let mut file = File::open(encrypted_file_path).context("Opening encrypted file")?;
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer)
+        .context("Reading encrypted file")?;
+
+    // Decrypt in reverse order
+    for _ in 0..rounds {
+        // Extract the nonce from the beginning of the buffer
+        let (nonce, encrypted_data) = buffer.split_at(24);
+
+        // Create a new cipher instance for each round
+        let cipher = XChaCha20Poly1305::new(key.into());
+
+        // Decrypt the data
+        let mut data_to_decrypt = encrypted_data.to_vec();
+        cipher
+            .decrypt_in_place(nonce.into(), b"", &mut data_to_decrypt)
+            .map_err(|err| anyhow!("Decrypting file: {}", err))?;
+
+        // Update buffer for the next round
+        buffer = data_to_decrypt;
+    }
+
+    // Remove the nonce from the final decrypted data
+    Ok(buffer)
 }
 
 // fn encrypt_large_file(
@@ -168,7 +256,8 @@ mod tests {
     }
 
     #[test]
-    fn test_encrypt_small_file() {// Test if payload is encrypted
+    fn test_encrypt_small_file() {
+        // Test if payload is encrypted
         // Arrange
         let data = b"Hello, world!";
         let filepath = Path::new("cargo_test_encrypt_file.db");

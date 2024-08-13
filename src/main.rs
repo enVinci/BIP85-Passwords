@@ -1,33 +1,35 @@
+use anyhow::{Context, Result};
 use bip32::{Mnemonic, Prefix, XPrv};
 // use bitcoin::hashes::{Hash, hmac, sha512, HashEngine};
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use bitcoin::bip32::{ChildNumber, DerivationPath, Xpriv};
 use clap::Parser;
 use hmac::{Hmac, Mac};
-use sha2::Sha512;
-use sha2::Sha256;
 use sha2::Digest;
+use sha2::Sha256;
+use sha2::Sha512;
 // use rand_core::OsRng;
 // use std::io;
 use std::str::FromStr;
 pub mod cripter;
-use crate::cripter::decrypt_small_file;
-use crate::cripter::encrypt_small_file;
+use crate::cripter::decrypt_small_file_with_rounds;
+use crate::cripter::encrypt_small_file_with_rounds;
+use std::env;
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
-use std::env;
+use std::path::{Path, PathBuf};
 use std::thread::sleep;
 use std::time::Duration;
 
 static DATABASE_PATH: &str = "mnemonic.db";
+const CIPHER_ROUNDS: usize = 809;
 
 #[derive(Parser)]
 #[command(version, long_about = None)]
 #[clap(about, version, author)]
 struct Args {
     #[clap(short = 'n', long = "name")]
-    ///<String> Name of password. Case insensitive (e.g. servicename@username#no).
+    ///<String> Name of the password. Case insensitive (e.g., servicename@username#no).
     name: Option<String>,
 
     #[clap(short = 'i', long = "index")]
@@ -39,23 +41,22 @@ struct Args {
     pwd_len: u32,
 
     #[clap(short = 'v', long = "verbose", default_value = "false")]
-    ///Verbose mode. Shows password index that corresponds to given name of password. [default: false]
+    ///Enable verbose mode. Displays the password index corresponding to the given name. [default: false]
     verbose: bool,
 
     #[clap(short = 'c', long = "no-clipboard", default_value = "false")]
-    ///Prevent coping password to the clipboard, display password instead. [default: false]
+    ///Prevent copying the password to the clipboard; display it instead. [default: false]
     no_clipboard: bool,
 
-    #[clap(short = 'd', long = "decrypt", default_value = "false", help=format!("Decrypt mnemonic from database [default: true if password database found] [default file: ~/{}]", DATABASE_PATH))]
-    ///Decrypt mnemonic from file. [default: false] [default file: ~/mnemonic.db]
-    decrypt: bool,
-
-    #[clap(short = 'e', long = "encrypt", default_value = "false", help=format!("Encrypt mnemonic to database [default: false] [default file: ~/{}]", DATABASE_PATH))]
-    ///Encrypt mnemonic to file. [default: false] [default file: ~/mnemonic.db]
+    //     #[clap(short = 'd', long = "decrypt", default_value = "false", help=format!("Decrypt the mnemonic from database. [default: true if password database found] [default file: ~/{}]", DATABASE_PATH))]
+    //     ///Decrypt the mnemonic from the database. [default: false] [default file: ~/mnemonic.db]
+    //     decrypt: bool,
+    #[clap(short = 'e', long = "encrypt", default_value = "false", help=format!("Encrypt the mnemonic into the database instead of decrypting it [default: false] [default file: ~/{}]", DATABASE_PATH))]
+    ///Encrypt the mnemonic to the database. [default: false] [default file: ~/mnemonic.db]
     encrypt: bool,
 
-    #[clap(short = 'f', long = "file", help=format!("Path to password protected mnemonic database. Used for decryption by default. [default: ~/{}]", DATABASE_PATH))]
-    ///Path to password database <String>. [default: ~/mnemonic.db]
+    #[clap(short = 'f', long = "file", help=format!("<String> Path to the password-protected mnemonic database. Used for decryption by default. [default: ~/{}]", DATABASE_PATH))]
+    ///<String> Path to the password-protected mnemonic database. Can be used with empty an argument to omit the default decryption of the mnemonic database. [default: ~/mnemonic.db]
     db_path: Option<String>,
 }
 
@@ -178,16 +179,29 @@ fn generate_bip85_password(root_xprv: Xpriv, index: u32, length: u32) -> String 
     entropy_b64[..length as usize].to_string()
 }
 
-fn main() -> anyhow::Result<()> {
-    let mut args = Args::parse();
-    let mnemonic_file_string = if args.db_path.is_some() {
-        args.db_path.unwrap()
+fn get_mnemonic_file_path(db_path: Option<String>) -> anyhow::Result<PathBuf> {
+    if let Some(path) = db_path {
+        // Convert the String to PathBuf
+        Ok(PathBuf::from(path))
     } else {
-        Path::new(&env::home_dir().expect("home dir env not specified. Try use -f option to specify database path.").into_os_string().into_string().expect("conversion String")).join(DATABASE_PATH).to_str().expect("conversion Path to str failed").to_string()
-    };
-    let mnemonic_file = Path::new(&mnemonic_file_string);
-    if !args.decrypt && !args.encrypt && mnemonic_file.exists() {
-        args.decrypt = true;
+        // Attempt to get the home directory
+        let home_dir = env::home_dir()
+            .context("Home directory environment variable is not set. Please use the -f option to specify the database path.")?;
+
+        let path = home_dir.join(DATABASE_PATH);
+        path.to_str()
+            .map(|s| PathBuf::from(s))
+            .context("Failed to convert the database path to a string.")
+    }
+}
+
+fn main() -> anyhow::Result<()> {
+    let mut decrypt = false;
+    let args = Args::parse();
+    let mnemonic_file = get_mnemonic_file_path(args.db_path)?;
+    let mnemonic_file_exists = mnemonic_file.exists();
+    if !args.encrypt && mnemonic_file_exists {
+        decrypt = true;
     }
     let index: Option<u32> = args
         .name
@@ -197,7 +211,7 @@ fn main() -> anyhow::Result<()> {
             let hash = hash_function_polyu32(&n.trim().to_lowercase());
             assert!(
                 args.index.is_none() || args.index.unwrap() == hash,
-                "Ambiguous Arguments: Index(i={}) do not match to Name('{}'(={}))!",
+                "Ambiguous Arguments: Index(i={}) do not match to Name('{}'={})!",
                 args.index.unwrap(),
                 n,
                 hash
@@ -206,12 +220,17 @@ fn main() -> anyhow::Result<()> {
         })
         .or_else(|| {
             Some(args.index.or_else(|| {
-                Some(hash_function_polyu32(
-                    &read_input("Name of a password:", true, false)
-                        .expect("Expected not empty string")
-                        .trim()
-                        .to_lowercase(),
-                ))
+                if args.encrypt {
+                    Some(0)
+                }
+                else {
+                    Some(hash_function_polyu32(
+                        &read_input("Name of a password:", true, false)
+                            .expect("Expected not empty string")
+                            .trim()
+                            .to_lowercase(),
+                    ))
+                }
             }))
         })
         .expect("Could not calculate the password index");
@@ -228,12 +247,12 @@ fn main() -> anyhow::Result<()> {
         println!("Index: {:?}", index.expect("Index not exist"));
     }
 
-//     let file_cipher_nonce = [0u8; 24];
+    //     let file_cipher_nonce = [0u8; 24];
     let mut file_cipher_key = [0u8; 32];
 
-    let root_xprv = if args.decrypt {
+    let root_xprv = if decrypt {
         assert!(
-            mnemonic_file.exists(),
+            mnemonic_file_exists,
             "No mnemonic database file: {}! Try use -f option to specify database path.",
             mnemonic_file.display()
         );
@@ -244,7 +263,7 @@ fn main() -> anyhow::Result<()> {
         hasher.update(password.as_bytes());
         let hashed_password = hasher.finalize();
         file_cipher_key.copy_from_slice(&hashed_password);
-        match decrypt_small_file(mnemonic_file, &file_cipher_key) {
+        match decrypt_small_file_with_rounds(&mnemonic_file, &file_cipher_key, CIPHER_ROUNDS) {
             std::result::Result::Ok(xpriv) => Xpriv::decode(&xpriv).unwrap(),
             std::result::Result::Err(err) => {
                 eprintln!("Decrypt mnemonic error: {}", err);
@@ -298,7 +317,7 @@ fn main() -> anyhow::Result<()> {
 
     if args.encrypt {
         assert!(
-            check_mnemonic_database_write_permissions(mnemonic_file)?,
+            check_mnemonic_database_write_permissions(&mnemonic_file)?,
             "No write permission to create mnemonic database file!"
         );
         let password = read_input("Your password to encrypt database:", true, false)?;
@@ -306,12 +325,21 @@ fn main() -> anyhow::Result<()> {
         hasher.update(password.as_bytes());
         let hashed_password = hasher.finalize();
         file_cipher_key.copy_from_slice(&hashed_password); // Ensure the key is 32 bytes
-        match encrypt_small_file(
+        match encrypt_small_file_with_rounds(
             &root_xprv.encode(),
-            mnemonic_file,
+            &mnemonic_file,
             &file_cipher_key,
+            CIPHER_ROUNDS,
         ) {
-            std::result::Result::Ok(_) => {}
+            std::result::Result::Ok(_) => {
+                if mnemonic_file_exists {
+                    let filename = mnemonic_file
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("Unknown filename");
+                    println!("The mnemonic database file '{}' was overwritten.", filename);
+                }
+            }
             std::result::Result::Err(e) => {
                 eprintln!("Encrypt mnemonic error: {}", e);
                 return Err(e.into());
@@ -331,7 +359,9 @@ fn main() -> anyhow::Result<()> {
         let mut clipboard = clippers::Clipboard::get();
         let copy_res = clipboard.write_text(password.clone());
         if copy_res.is_err() {
-            println!("Error while copying to clipboard. Try use -c option to display password instead.");
+            println!(
+                "Error while copying to clipboard. Try use -c option to display password instead."
+            );
         }
         assert_eq!(clipboard.read().unwrap().into_text().unwrap(), password);
         if args.verbose {
