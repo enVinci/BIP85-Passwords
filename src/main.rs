@@ -22,7 +22,7 @@ use std::thread::sleep;
 use std::time::Duration;
 
 static DATABASE_PATH: &str = "mnemonic.db";
-const CIPHER_ROUNDS: usize = 809;
+const CIPHER_ROUNDS: usize = 4001;
 
 #[derive(Parser)]
 #[command(version, long_about = None)]
@@ -55,8 +55,8 @@ struct Args {
     ///Encrypt the mnemonic to the database. [default: false] [default file: ~/mnemonic.db]
     encrypt: bool,
 
-    #[clap(short = 'f', long = "file", help=format!("<String> Path to the password-protected mnemonic database. Used for decryption by default. [default: ~/{}]", DATABASE_PATH))]
-    ///<String> Path to the password-protected mnemonic database. Can be used with empty an argument to omit the default decryption of the mnemonic database. [default: ~/mnemonic.db]
+    #[clap(short = 'f', long = "file", help=format!("<String> Path to the password-protected mnemonic database. Used for decryption the mnemonic database by default. Provide an empty argument to omit the default decryption behavior. [default: ~/{}]", DATABASE_PATH))]
+    ///<String> Path to the password-protected mnemonic database. Used for decryption the mnemonic database by default. Provide an empty argument to omit the default decryption behavior. [default: ~/mnemonic.db]
     db_path: Option<String>,
 }
 
