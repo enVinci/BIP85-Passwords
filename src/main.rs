@@ -623,4 +623,159 @@ mod tests {
             combined_text
         );
     }
+
+    #[test]
+    fn test_hash_polyu32_empty_string() {
+        assert_eq!(hash_function_polyu32(""), 0);
+    }
+
+    #[test]
+    fn test_hash_polyu32_single_character() {
+        // Testing lowercase letters
+        assert_eq!(hash_function_polyu32("a"), 97); // ASCII value of 'a' is 97
+        assert_eq!(hash_function_polyu32("b"), 98); // ASCII value of 'b' is 98
+        assert_eq!(hash_function_polyu32("c"), 99); // ASCII value of 'c' is 99
+        assert_eq!(hash_function_polyu32("d"), 100); // ASCII value of 'd' is 100
+        assert_eq!(hash_function_polyu32("e"), 101); // ASCII value of 'e' is 101
+        assert_eq!(hash_function_polyu32("f"), 102); // ASCII value of 'f' is 102
+        assert_eq!(hash_function_polyu32("g"), 103); // ASCII value of 'g' is 103
+        assert_eq!(hash_function_polyu32("h"), 104); // ASCII value of 'h' is 104
+        assert_eq!(hash_function_polyu32("i"), 105); // ASCII value of 'i' is 105
+        assert_eq!(hash_function_polyu32("j"), 106); // ASCII value of 'j' is 106
+        assert_eq!(hash_function_polyu32("k"), 107); // ASCII value of 'k' is 107
+        assert_eq!(hash_function_polyu32("l"), 108); // ASCII value of 'l' is 108
+        assert_eq!(hash_function_polyu32("m"), 109); // ASCII value of 'm' is 109
+        assert_eq!(hash_function_polyu32("n"), 110); // ASCII value of 'n' is 110
+        assert_eq!(hash_function_polyu32("o"), 111); // ASCII value of 'o' is 111
+        assert_eq!(hash_function_polyu32("p"), 112); // ASCII value of 'p' is 112
+        assert_eq!(hash_function_polyu32("q"), 113); // ASCII value of 'q' is 113
+        assert_eq!(hash_function_polyu32("r"), 114); // ASCII value of 'r' is 114
+        assert_eq!(hash_function_polyu32("s"), 115); // ASCII value of 's' is 115
+        assert_eq!(hash_function_polyu32("t"), 116); // ASCII value of 't' is 116
+        assert_eq!(hash_function_polyu32("u"), 117); // ASCII value of 'u' is 117
+        assert_eq!(hash_function_polyu32("v"), 118); // ASCII value of 'v' is 118
+        assert_eq!(hash_function_polyu32("w"), 119); // ASCII value of 'w' is 119
+        assert_eq!(hash_function_polyu32("x"), 120); // ASCII value of 'x' is 120
+        assert_eq!(hash_function_polyu32("y"), 121); // ASCII value of 'y' is 121
+        assert_eq!(hash_function_polyu32("z"), 122); // ASCII value of 'z' is 122
+
+        // Testing uppercase letters
+        assert_eq!(hash_function_polyu32("A"), 65); // ASCII value of 'A' is 65
+        assert_eq!(hash_function_polyu32("B"), 66); // ASCII value of 'B' is 66
+        assert_eq!(hash_function_polyu32("C"), 67); // ASCII value of 'C' is 67
+        assert_eq!(hash_function_polyu32("D"), 68); // ASCII value of 'D' is 68
+        assert_eq!(hash_function_polyu32("E"), 69); // ASCII value of 'E' is 69
+        assert_eq!(hash_function_polyu32("F"), 70); // ASCII value of 'F' is 70
+        assert_eq!(hash_function_polyu32("G"), 71); // ASCII value of 'G' is 71
+        assert_eq!(hash_function_polyu32("H"), 72); // ASCII value of 'H' is 72
+        assert_eq!(hash_function_polyu32("I"), 73); // ASCII value of 'I' is 73
+        assert_eq!(hash_function_polyu32("J"), 74); // ASCII value of 'J' is 74
+        assert_eq!(hash_function_polyu32("K"), 75); // ASCII value of 'K' is 75
+        assert_eq!(hash_function_polyu32("L"), 76); // ASCII value of 'L' is 76
+        assert_eq!(hash_function_polyu32("M"), 77); // ASCII value of 'M' is 77
+        assert_eq!(hash_function_polyu32("N"), 78); // ASCII value of 'N' is 78
+        assert_eq!(hash_function_polyu32("O"), 79); // ASCII value of 'O' is 79
+        assert_eq!(hash_function_polyu32("P"), 80); // ASCII value of 'P' is 80
+        assert_eq!(hash_function_polyu32("Q"), 81); // ASCII value of 'Q' is 81
+        assert_eq!(hash_function_polyu32("R"), 82); // ASCII value of 'R' is 82
+        assert_eq!(hash_function_polyu32("S"), 83); // ASCII value of 'S' is 83
+        assert_eq!(hash_function_polyu32("T"), 84); // ASCII value of 'T' is 84
+        assert_eq!(hash_function_polyu32("U"), 85); // ASCII value of 'U' is 85
+        assert_eq!(hash_function_polyu32("V"), 86); // ASCII value of 'V' is 86
+        assert_eq!(hash_function_polyu32("W"), 87); // ASCII value of 'W' is 87
+        assert_eq!(hash_function_polyu32("X"), 88); // ASCII value of 'X' is 88
+        assert_eq!(hash_function_polyu32("Y"), 89); // ASCII value of 'Y' is 89
+        assert_eq!(hash_function_polyu32("Z"), 90); // ASCII value of 'Z' is 90
+
+        // Testing some special characters
+        assert_eq!(hash_function_polyu32("!"), 33); // ASCII value of '!' is 33
+        assert_eq!(hash_function_polyu32("@"), 64); // ASCII value of '@' is 64
+        assert_eq!(hash_function_polyu32("#"), 35); // ASCII value of '#' is 35
+        assert_eq!(hash_function_polyu32("$"), 36); // ASCII value of '$' is 36
+        assert_eq!(hash_function_polyu32("%"), 37); // ASCII value of '%' is 37
+        assert_eq!(hash_function_polyu32("^"), 94); // ASCII value of '^' is 94
+        assert_eq!(hash_function_polyu32("&"), 38); // ASCII value of '&' is 38
+        assert_eq!(hash_function_polyu32("("), 40); // ASCII values of '('
+        assert_eq!(hash_function_polyu32(")"), 41); // ASCII values of ')'
+        assert_eq!(hash_function_polyu32("*"), 42); // ASCII value of '*' is 42
+    }
+
+    #[test]
+    fn test_hash_polyu32_unicode_single_characters() {
+        // Testing some common Unicode characters
+        assert_eq!(hash_function_polyu32("é"), 233); // Unicode value for 'é' is 233
+        assert_eq!(hash_function_polyu32("ñ"), 241); // Unicode value for 'ñ' is 241
+        assert_eq!(hash_function_polyu32("中"), 20013 % 10000); // Unicode value for '中' (Chinese character) is 20013
+        assert_eq!(hash_function_polyu32("α"), 945); // Unicode value for 'α' (Greek letter alpha) is 945
+        assert_eq!(hash_function_polyu32("β"), 946); // Unicode value for 'β' (Greek letter beta) is 946
+        assert_eq!(hash_function_polyu32("א"), 1488); // Unicode value for 'א' (Hebrew letter Aleph) is 1488
+        assert_eq!(hash_function_polyu32("ב"), 1489); // Unicode value for 'ב' (Hebrew letter Bet)
+                                                      // Testing some common emojis
+        assert_eq!(hash_function_polyu32("😀"), 128512 % 10000); // Grinning face
+        assert_eq!(hash_function_polyu32("😂"), 128514 % 10000); // Face with tears of joy
+        assert_eq!(hash_function_polyu32("😍"), 128525 % 10000); // Smiling face with heart-eyes
+        assert_eq!(hash_function_polyu32("😎"), 128526 % 10000); // Smiling face with sunglasses
+        assert_eq!(hash_function_polyu32("😢"), 128546 % 10000); // Crying face
+        assert_eq!(hash_function_polyu32("😡"), 128545 % 10000); // Angry face
+        assert_eq!(hash_function_polyu32("👍"), 128077 % 10000); // Thumbs up
+        assert_eq!(hash_function_polyu32("👋"), 128075 % 10000); // Waving hand
+        assert_eq!(hash_function_polyu32("🎉"), 127881 % 10000); // Party popper
+        assert_eq!(hash_function_polyu32("❤"), 10084 % 10000); // Red heart
+        assert_eq!(hash_function_polyu32("😊"), 128522 % 10000); // Unicode value for '😊' (smiling face) is 128522
+        assert_eq!(hash_function_polyu32("🚀"), 128640 % 10000); // Unicode value for '🚀' (rocket) is 128640
+    }
+
+    #[test]
+    fn test_hash_polyu32_multiple_characters() {
+        assert_eq!(
+            hash_function_polyu32("abc"),
+            (97 + 31 * 98 + 31 * 31 * 99) % 10000
+        );
+        assert_eq!(
+            hash_function_polyu32("hello"),
+            (104 + 31 * 101 + 31 * 31 * 108 + 31 * 31 * 31 * 108 + 31 * 31 * 31 * 31 * 111) % 10000
+        );
+    }
+
+    #[test]
+    fn test_hash_polyu32_unicode_multiple_characters() {
+        assert_eq!(hash_function_polyu32("אא"), (31 * 1488 + 1488) % 10000); // Testing two Hebrew letters
+                                                                             // Testing a mix of characters
+        assert_eq!(hash_function_polyu32("אב"), (31 * 1489 + 1488) % 10000); // 'א' (Aleph) and 'ב' (Bet)
+
+        // Testing with Unicode characters from different languages
+        assert_eq!(hash_function_polyu32("你好"), (20320 + 22909 * 31) % 10000);
+        // '你' (nǐ) and '好' (hǎo)
+    }
+
+    #[test]
+    fn test_hash_polyu32_long_string() {
+        let long_string = "This is a longer string to test the polyu32 hash function. 😀";
+        let expected_hash: u32 = long_string
+            .chars()
+            .fold((0u32, 1u32), |(hash, power), ch| {
+                let new_hash = hash.wrapping_add(power.wrapping_mul(ch as u32));
+                let new_power = power.wrapping_mul(31);
+                (new_hash, new_power)
+            })
+            .0
+            % 10000; // Get the final hash value
+
+        assert_eq!(hash_function_polyu32(long_string), expected_hash);
+    }
+
+    #[test]
+    fn test_hash_polyu32_hash_range() {
+        for i in 0..1000 {
+            let input = "test".repeat(i);
+            let hash_value = hash_function_polyu32(&input);
+            assert!(
+                hash_value < 10000,
+                "Hash value {} is out of allowed range for iteration {}, input '{}'",
+                hash_value,
+                i,
+                input
+            );
+        }
+    }
 }
