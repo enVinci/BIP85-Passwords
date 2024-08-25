@@ -10,10 +10,12 @@ description = "Generate a password base on an BIP-32 Root Key or 24 word BIP-39 
 [dependencies]
 clap = {version = "4.5.15", features = ["derive"]}
 base64 = "0.22.1"
+base58 = "0.2.0"
 bitcoin = "0.32.2"
 hmac = "0.12.1"
 sha2 = "0.10.8"  # For SHA-512"
 bip32 = "0.5.2"
+bip39 = "2.0.0"
 #secp256k1 = "0.29.0"
 #rand_core = { version = "0.6.4", features = ["std"] }
 rand = "0.8.5"

@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
-use bip32::{Mnemonic, Prefix, XPrv};
+use bip32::{Error as Bip32Error, Mnemonic, Prefix, XPrv};
+use bip39::{Error as Bip39Error, Mnemonic as Bip39Mnemonic};
 // use bitcoin::hashes::{Hash, hmac, sha512, HashEngine};
+use base58::FromBase58;
 use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 use bitcoin::bip32::{ChildNumber, DerivationPath, Xpriv};
 use clap::Parser;
@@ -8,18 +10,23 @@ use hmac::{Hmac, Mac};
 use sha2::Digest;
 use sha2::Sha256;
 use sha2::Sha512;
-// use rand_core::OsRng;
-// use std::io;
-use std::str::FromStr;
 pub mod cripter;
 use crate::cripter::decrypt_small_file_with_rounds;
 use crate::cripter::encrypt_small_file_with_rounds;
+// use rand_core::OsRng;
+// use std::io;
 use std::env;
 use std::fs;
 use std::io::{self, Write};
+use std::panic;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::thread::sleep;
 use std::time::Duration;
+
+// ANSI escape code for yellow text
+const YELLOW: &str = "\x1b[33m";
+const RESET: &str = "\x1b[0m"; // Reset to default color
 
 static DATABASE_PATH: &str = "mnemonic.db";
 const CIPHER_ROUNDS: usize = 4001;
@@ -149,11 +156,165 @@ fn read_input(prompt: &str, masked: bool, allow_empty: bool) -> Result<String, i
     if !allow_empty && line.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "Empty Input Found",
+            "Read Input: Empty Input Found",
         ));
     }
 
     Ok(line.to_string())
+}
+
+/// Converts an index to its ordinal representation (1st, 2nd, 3rd, etc.).
+///
+/// # Parameters
+/// - `n`: The index to convert (1-based).
+///
+/// # Returns
+/// - A string representing the ordinal suffix.
+fn ordinal_suffix(n: usize) -> String {
+    let suffix = match n % 100 {
+        11 | 12 | 13 => "th", // Special case for 11th, 12th, 13th
+        _ => match n % 10 {
+            1 => "st",
+            2 => "nd",
+            3 => "rd",
+            _ => "th",
+        },
+    };
+    format!("{}{}", n, suffix)
+}
+
+/// Validates a BIP39 mnemonic phrase.
+///
+/// # Parameters
+/// - `mnemonic_phrase`: A string slice representing the mnemonic phrase to validate.
+///
+/// # Returns
+/// - `bool`: Returns `true` if the mnemonic is valid, `false` otherwise.
+fn validate_mnemonic(mnemonic_phrase: &str) -> bool {
+    match Bip39Mnemonic::parse(mnemonic_phrase) {
+        Ok(_) => true, // Mnemonic is valid
+        Err(e) => {
+            // Handle different types of errors
+            match e {
+                Bip39Error::BadWordCount(count) => {
+                    println!("Validation Error: Mnemonic Bad word count. Expected a multiple of 6, but got {} words.", count);
+                }
+                Bip39Error::UnknownWord(index) => {
+                    let word = mnemonic_phrase
+                        .split_whitespace()
+                        .nth(index)
+                        .unwrap_or("unknown");
+                    let ordinal = ordinal_suffix(index + 1);
+                    println!(
+                        "Validation Error: Mnemonic Unknown {} word '{}'",
+                        ordinal, word
+                    );
+                }
+                Bip39Error::BadEntropyBitCount(count) => {
+                    println!("Validation Error: Mnemonic Bad entropy bit count. Expected a multiple of 32 bits, but got {} bits.", count);
+                }
+                Bip39Error::InvalidChecksum => {
+                    println!("Validation Error: The mnemonic has an invalid checksum.");
+                }
+                Bip39Error::AmbiguousLanguages(ambiguous) => {
+                    println!(
+                        "Validation Error: The mnemonic can be interpreted as multiple languages."
+                    );
+                    // Print possible languages
+                    for lang in ambiguous.iter() {
+                        println!("Possible language: {:?}", lang);
+                    }
+                }
+            }
+            false // Mnemonic is invalid
+        }
+    }
+}
+
+fn read_passphrase(require_reentry: bool) -> Result<String> {
+    loop {
+        let passphrase1 = read_input(
+            "Enter passphrase for the BIP39 mnemonic [Empty]:",
+            true,
+            true,
+        )
+        .context("Failed to read passphrase")?;
+
+        // If the first passphrase is empty, return it directly
+        if passphrase1.is_empty() || !require_reentry {
+            return Ok(passphrase1);
+        }
+
+        let passphrase2 = read_input("Re-enter passphrase for confirmation:", true, true)
+            .context("Failed to read passphrase")?;
+
+        if passphrase1 == passphrase2 {
+            return Ok(passphrase1); // Return the validated passphrase
+        } else {
+            println!("Passphrases do not match. Please try again.");
+        }
+    }
+}
+
+fn read_encryption_password() -> Result<String> {
+    loop {
+        let password1 = read_input("Password to encrypt the database:", true, false)
+            .context("Failed to read password")?;
+        let password_confirmation = read_input("Re-enter password for confirmation:", true, false)
+            .context("Failed to read password")?;
+
+        if password1 == password_confirmation {
+            return Ok(password1); // Return the validated password
+        } else {
+            println!("Passwords do not match. Please try again.");
+        }
+    }
+}
+
+fn validate_wrapped_encoded_string(encoded: &str) -> Result<bool, String> {
+    // Decode the Base58 encoded string
+    let decoded = encoded
+        .from_base58()
+        .map_err(|_| "Failed to decode Base58".to_string())?;
+
+    // Ensure the decoded data is at least 5 bytes (1 byte for payload,version, 4 bytes for checksum)
+    if decoded.len() < 5 {
+        return Err("Decoded data is too short".to_string());
+    }
+
+    // Extract version, payload, and checksum
+    //     let version = decoded[0];
+    let checksum_bytes = &decoded[decoded.len() - 4..];
+    let payload = &decoded[..decoded.len() - 4];
+
+    // Print the extracted variables in the desired format
+    //     println!("wrapper");
+    //     println!("{{");
+    //     println!("    checksum {}", u32::from_be_bytes([checksum_bytes[3], checksum_bytes[2], checksum_bytes[1], checksum_bytes[0]]));
+    //     println!("    checksum bytes {:?}", checksum_bytes);
+    //     println!("    payload bytes {:?}", &payload[1..]); // Convert payload to hex for readability
+    //     println!("    version {}", version);
+    //     println!("}}");
+
+    // Calculate the checksum of the payload using double SHA-256
+    let mut hasher = Sha256::new();
+    hasher.update(payload);
+    let hash1 = hasher.finalize();
+
+    let mut hasher2 = Sha256::new();
+    hasher2.update(&hash1);
+    let hash2 = hasher2.finalize();
+
+    // The checksum is the first 4 bytes of the second SHA256 hash
+    let calculated_checksum = &hash2[..4];
+    //     println!("calculated checksum {:?}", calculated_checksum);
+
+    // Compare the calculated checksum with the extracted checksum
+    if calculated_checksum == checksum_bytes {
+        Ok(true)
+    } else {
+        Err("Invalid data checksum".to_string())
+    }
 }
 
 fn generate_bip85_password(root_xprv: Xpriv, index: u32, length: u32) -> String {
@@ -222,8 +383,7 @@ fn main() -> anyhow::Result<()> {
             Some(args.index.or_else(|| {
                 if args.encrypt {
                     Some(0)
-                }
-                else {
+                } else {
                     Some(hash_function_polyu32(
                         &read_input("Name of a password:", true, false)
                             .expect("Expected not empty string")
@@ -272,32 +432,63 @@ fn main() -> anyhow::Result<()> {
         }
     } else {
         match read_input(
-            "Enter a BIP-32 root key (xprv...) or 24-word BIP-39 mnemonic:",
+            "Enter a BIP32 Root Key (xprv...) or English 24-word BIP39 mnemonic:",
             true,
             false,
         ) {
             Ok(line) => {
                 if line.starts_with("xprv") {
                     //             println!("debug XPRV:            {}", line);
-                    Xpriv::from_str(&line).unwrap()
+                    Xpriv::from_str(&line)
+                        .context("Failed to parse a Xpriv value from a string")
+                        .unwrap()
                 } else {
                     //         println!("debug  Mnemonic:        {}", &line);
-                    let mnemonic = Mnemonic::new(&line, Default::default()).unwrap(); // works only with 24 word mnemonic
-                    match read_input(
-                        "Enter passphrase for the BIP-39 mnemonic [Empty]:",
-                        true,
-                        true,
-                    ) {
-                        Ok(passphrase) => {
-                            let seed = mnemonic.to_seed(&passphrase);
-                            Xpriv::from_str(&XPrv::new(&seed).unwrap().to_string(Prefix::XPRV))
-                                .unwrap()
+                    validate_mnemonic(&line);
+                    let mnemonic = Mnemonic::new(&line, Default::default()).map_err(|e| {
+                        let word_count = line.split_whitespace().count();
+                        let word_count_msg = if word_count != 24 {
+                            format!(" Expected 24 words, got: {}", word_count)
+                        } else {
+                            String::new()
+                        };
+                        match e {
+                            Bip32Error::Bip39 => {
+                                anyhow::anyhow!("BIP39 error: The English language mnemonic is invalid or not properly formatted.{}", word_count_msg)
+                            }
+                            Bip32Error::Base58 => {
+                                anyhow::anyhow!("Base58 error: There was an issue with Base58 encoding.")
+                            }
+                            Bip32Error::ChildNumber => {
+                                anyhow::anyhow!("Child number error: The child number is invalid.")
+                            }
+                            Bip32Error::Crypto => {
+                                anyhow::anyhow!("Cryptographic error: There was a cryptographic issue.")
+                            }
+                            Bip32Error::Decode => {
+                                anyhow::anyhow!("Decode error: There was an issue decoding the input.")
+                            }
+                            Bip32Error::Depth => {
+                                anyhow::anyhow!("Depth error: Maximum derivation depth exceeded.")
+                            }
+                            Bip32Error::SeedLength => {
+                                anyhow::anyhow!("Seed length error: The seed length is invalid.")
+                            }
+                            // Wildcard pattern to handle any future variants
+                            _ => {
+                                anyhow::anyhow!("Unknown error occurred: {:?}", e)
+                            }
                         }
-                        Err(err) => {
-                            eprintln!("Passphrase Error: {}", err);
-                            return Err(err.into());
+                    })?; // works only with 24 word mnemonic
+                    let passphrase = read_passphrase(args.encrypt)?;
+                    if !passphrase.is_empty() {
+                        let validation_result = validate_wrapped_encoded_string(&passphrase);
+                        if validation_result.is_err() {
+                            println!("{}Validation Passphrase Warning: Entered passphrase has no wrapped checksum or it is invalid: {}!{}", YELLOW, validation_result.unwrap_err(), RESET);
                         }
                     }
+                    let seed = mnemonic.to_seed(&passphrase);
+                    Xpriv::from_str(&XPrv::new(&seed).unwrap().to_string(Prefix::XPRV)).unwrap()
                 }
             }
             Err(err) => {
@@ -320,7 +511,7 @@ fn main() -> anyhow::Result<()> {
             check_mnemonic_database_write_permissions(&mnemonic_file)?,
             "No write permission to create mnemonic database file!"
         );
-        let password = read_input("Your password to encrypt database:", true, false)?;
+        let password = read_encryption_password()?;
         let mut hasher = Sha256::new();
         hasher.update(password.as_bytes());
         let hashed_password = hasher.finalize();
@@ -356,7 +547,11 @@ fn main() -> anyhow::Result<()> {
     let password =
         generate_bip85_password(root_xprv, index.expect("Index not exist"), args.pwd_len);
     if !args.no_clipboard {
-        let mut clipboard = clippers::Clipboard::get();
+        let mut clipboard = panic::catch_unwind(|| {
+            clippers::Clipboard::get()
+        }).map_err(|_| {
+            anyhow::anyhow!("Error getting clipboard: The operation panicked. Try use -c option to display password instead.")
+        })?;
         let copy_res = clipboard.write_text(password.clone());
         if copy_res.is_err() {
             println!(
